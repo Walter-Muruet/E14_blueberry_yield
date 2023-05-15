@@ -1,0 +1,92 @@
+---
+title: "00-wm-dataset_info"
+output: html_notebook
+---
+
+**Objectives:**
+01. Initial data loading (and merging, if needed) and saving in *Data/Interim*
+02. List variable types, and
+03. Gather insight on data storage
+
+
+```{r set up}
+# Packages
+## here package for automatically constructing file paths
+if (!"here" %in% installed.packages()) {
+  install.packages("here", dependencies = TRUE, quiet = TRUE)
+}
+
+## Install all other packages
+source(here::here("Src","R","install_required_packages.R"))
+
+## Load selected libraries to load space
+library(magrittr) # enables the use of pipes
+
+```
+
+```{r set up - file specific functions}
+# Reduces the amount of code repeated for reading csv files
+readr_warpper <- function(file_name, show_col_types = FALSE) {
+  readr::read_csv(here::here("Data", "Raw", file_name),
+                  show_col_types = show_col_types, progress = FALSE)
+}
+
+```
+
+
+
+```{r load data}
+blueberries_train <- readr_warpper("train.csv")
+blueberries_test <- readr_warpper("test.csv")
+sample_submission <- readr_warpper("sample_submission.csv")
+blueberries_og <- readr_warpper("WildBlueberryPollinationSimulationData.csv")
+```
+
+```{r view data - train}
+print(blueberries_train)
+```
+
+```{r view data - original}
+print(blueberries_og) #`Row#` needs to be changed to id; id itself needs to be re-calculated
+```
+
+```{r view data - test}
+print(blueberries_test)
+```
+
+```{r view data - sample submission}
+print(sample_submission)
+```
+
+```{r data preparation - append train to og}
+# Prepare blueberries_og for appending
+blueberries_og_4merge <- 
+  blueberries_og %>%
+  dplyr::rename(id = `Row#`) %>%
+  dplyr::mutate(.provenance = "original")
+
+# Prepare blueberries_train
+blueberries_train_4merge <- 
+  blueberries_train %>%
+  dplyr::mutate(.provenance = "synthetic")
+
+blueberries_appended <- 
+  dplyr::bind_rows(blueberries_train_4merge, blueberries_og_4merge) %>%
+  dplyr::mutate(id = dplyr::row_number()-1)
+
+print(head(blueberries_appended))
+```
+
+```{r Export prepared (iterim) data}
+saveRDS(blueberries_appended, file = here::here("Data", "Interim", "blueberries_appended.RDS"))
+saveRDS(blueberries_test, file = here::here("Data", "Interim", "blueberries_test.RDS"))
+
+```
+
+
+
+
+
+
+
+
