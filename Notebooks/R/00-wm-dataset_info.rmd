@@ -80,13 +80,4 @@ print(head(blueberries_appended))
 ```{r Export prepared (iterim) data}
 saveRDS(blueberries_appended, file = here::here("Data", "Interim", "blueberries_appended.RDS"))
 saveRDS(blueberries_test, file = here::here("Data", "Interim", "blueberries_test.RDS"))
-
 ```
-
-
-
-
-
-
-
-
