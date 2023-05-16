@@ -9,6 +9,18 @@ install_required_packages <- function() {
       #Data manipulation
       "dplyr",
       
+      #Exploratory Data Analysis
+      "skimr",
+      
+      #Visualisations
+      "ggplot2",
+      "ggthemes",
+      "ggsci",
+      
+      #Modeling
+      'kknn',
+      'kernlab',
+      
       #Utilities
       "magrittr")
   

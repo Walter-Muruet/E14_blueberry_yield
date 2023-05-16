@@ -1,0 +1,239 @@
+---
+title: "xx-wm-predictions_v1"
+output: html_notebook
+---
+
+```{r set up}
+# Packages
+## here package for automatically constructing file paths
+if (!"here" %in% installed.packages()) {
+  install.packages("here", dependencies = TRUE, quiet = TRUE)
+}
+
+## Install all other packages
+source(here::here("Src","R","install_required_packages.R"))
+
+## Load selected libraries to load space
+library(magrittr) # enables the use of pipes
+
+# Visualisation parameters
+## ggplot2 settings
+ggplot2::theme_set(
+  ggthemes::theme_tufte() +
+    ggplot2::theme(legend.position = "bottom",
+                   text = ggplot2::element_text(size = 12))
+)
+```
+
+```{r load data}
+blueberries_train <- readr::read_rds(here::here("Data", "Interim", "blueberries_appended.RDS")) #Data from competition plus original dataset
+
+```
+
+# Advanced models
+
+```{r model engines}
+n_cpu <- parallel::detectCores() -1 
+
+randf_eng <- 
+  parsnip::rand_forest(mtry = tune::tune(), 
+                       trees = tune::tune(), 
+                       min_n = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("ranger", num.threads = n_cpus)
+
+boost_eng <- 
+  parsnip::boost_tree(trees = tune::tune(), 
+                      tree_depth = tune::tune(), 
+                      learn_rate = tune::tune(), 
+                      loss_reduction = tune::tune(), 
+                      stop_iter = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("xgboost")
+
+kknn_eng <- 
+  parsnip::nearest_neighbor(neighbors = tune::tune(), 
+                            weight_func = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("kknn")
+
+svmli_eng <- 
+  parsnip::svm_linear(cost = tune::tune(),
+                      margin = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("kernlab")
+
+svmpoly_eng <- 
+  parsnip::svm_poly(cost = tune::tune(), 
+                    degree = tune::tune(),
+                    scale_factor = tune::tune(),
+                    margin = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("kernlab")
+
+svmrbf_eng <- 
+  parsnip::svm_rbf(cost = tune::tune(), 
+                    rbf_sigma = tune::tune(),
+                    margin = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("kernlab")
+```
+
+
+```{r preprocessing recipes}
+rec <- 
+  recipes::recipe(yield ~ ., data = blueberries_train) %>%
+  recipes::step_discretize(clonesize, honeybee, bumbles, andrena, osmia, 
+                           num_breaks = tune::tune(), 
+                           min_unique = tune::tune()) %>%
+  recipes::step_pca(MaxOfUpperTRange, MinOfUpperTRange,AverageOfUpperTRange, 
+  MaxOfLowerTRange, MinOfLowerTRange, AverageOfLowerTRange, 
+  num_comp = 3) %>%
+  recipes::step_rm(.provenance)
+
+```
+
+```{r Workflow sets}
+wkflw_set <- 
+  workflowsets::workflow_set(preproc = list(rec),
+                             models = list(rf = randf_eng,
+                                           gb = boost_eng,
+                                           knn = kknn_eng,
+                                           linear_svm = svmli_eng,
+                                           poly_svm = svmpoly_eng,
+                                           rbf_svm = svmrbf_eng),
+                             cross = TRUE)
+```
+
+
+```{r model screening}
+# cross validation folds
+set.seed(13)
+cv_folds <- rsample::vfold_cv(blueberries_train, v = 10)
+
+# Metrics
+regression_metrics <- yardstick::metric_set(yardstick::mae, yardstick::mape)
+
+# race controls
+race_ctrl <- finetune::control_race(save_pred = TRUE, save_workflow = TRUE,
+                                    parallel_over = "everything")
+
+
+fitted_models <- workflowsets::workflow_map(wkflw_set,
+                                            resamples= cv_folds,
+                                            grid = 20,
+                                            metrics = regression_metrics,
+                                            control = race_ctrl,
+                                            seed = 13)
+
+beepr::beep(4)
+```
+
+```{r rf not working wtf!!!}
+fitted_models %>%
+  dplyr::filter(wflow_id == "recipe_rf") %>%
+  dplyr::pull(result)
+
+# Tuning preprocessing steps is not compatible with automatic mtry tunning
+
+```
+
+
+```{r rank models}
+fitted_models %>%
+  dplyr::filter(wflow_id != "recipe_rf") %>%
+workflowsets::rank_results(rank_metric = "mape", select_best = TRUE)
+```
+
+```{r best hyperparameters - gradient boosting}
+gb_best_params <- 
+  fitted_models %>%
+  dplyr::filter(wflow_id != "recipe_rf") %>%
+  workflowsets::extract_workflow_set_result(id = 'recipe_gb') %>%
+  tune::select_best(metric = "mape") %T>%
+  readr::write_csv(here::here("Models","Hyperparameters","recipe_gb_hyperparams_v1.csv")) %T>%
+  print()
+
+```
+
+```{r best hyperparameters - svm rbf}
+rbf_svm_best_params <- 
+  fitted_models %>%
+  dplyr::filter(wflow_id != "recipe_rf") %>%
+  workflowsets::extract_workflow_set_result(id = 'recipe_rbf_svm') %>%
+  tune::select_best(metric = "mape") %T>%
+  readr::write_csv(here::here("Models","Hyperparameters","recipe_rbf_svm_hyperparams_v1.csv")) %T>%
+  print()
+
+```
+
+```{r best hyperparameters - svm poly}
+poly_svm_best_params <- 
+  fitted_models %>%
+  dplyr::filter(wflow_id != "recipe_rf") %>%
+  workflowsets::extract_workflow_set_result(id = 'recipe_poly_svm') %>%
+  tune::select_best(metric = "mape") %T>%
+  readr::write_csv(here::here("Models","Hyperparameters","recipe_poly_svm_hyperparams_v1.csv")) %T>%
+  print()
+
+```
+
+```{r fit best performing models}
+gb_regressor <- 
+  fitted_models %>%
+  workflowsets::extract_workflow(id = "recipe_gb") %>%
+  tune::finalize_workflow(gb_best_params) %>%
+  parsnip::fit(blueberries_train)
+
+rbf_regressor <- 
+  fitted_models %>%
+  workflowsets::extract_workflow(id = "recipe_rbf_svm") %>%
+  tune::finalize_workflow(rbf_svm_best_params) %>%
+  parsnip::fit(blueberries_train)
+
+poly_regressor <- 
+  fitted_models %>%
+  workflowsets::extract_workflow(id = "recipe_poly_svm") %>%
+  tune::finalize_workflow(poly_svm_best_params) %>%
+  parsnip::fit(blueberries_train)
+
+```
+
+```{r generate submissions}
+generate_submissions <- function(model, new_data) {
+  file_name = as.character(substitute(model))
+  
+  #cols_not_in_new_data <- setdiff(names(old_data), names(new_data))
+  
+  #new_data <- dplyr::mutate(new_data,
+                            #dplyr::across(.cols = tidyselect::all_of(cols_not_in_new_data),
+                                          #.fns = ~ NA))
+  
+  
+  y_preds <- predict(model, new_data = new_data)[[1]]
+  
+  new_data %>%
+    dplyr::transmute(
+      id = id,
+      yield = y_preds) %T>% 
+    readr::write_csv(here::here("Submissions",paste0(file_name,"_v1.csv"))) %>%
+    print()
+}
+
+```
+
+```{r test data}
+blueberries_test <- 
+  readRDS(here::here("Data", "Interim", "blueberries_test.RDS")) %>%
+  dplyr::mutate(.provenance = NA)
+```
+
+
+```{r submissions}
+generate_submissions(gb_regressor, blueberries_test)
+generate_submissions(rbf_regressor, blueberries_test)
+generate_submissions(poly_regressor, blueberries_test)
+
+```
+
+

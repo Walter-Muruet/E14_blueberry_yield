@@ -1,0 +1,150 @@
+---
+title: "01-wm-eda-univariate_analysis"
+output: html_notebook
+---
+
+```{r set up}
+# Packages
+## here package for automatically constructing file paths
+if (!"here" %in% installed.packages()) {
+  install.packages("here", dependencies = TRUE, quiet = TRUE)
+}
+
+## Install all other packages
+source(here::here("Src","R","install_required_packages.R"))
+
+## Load selected libraries to load space
+library(magrittr) # enables the use of pipes
+
+# Visualisation parameters
+## ggplot2 settings
+ggplot2::theme_set(
+  ggthemes::theme_tufte() +
+    ggplot2::theme(legend.position = "bottom",
+                   text = ggplot2::element_text(size = 12))
+)
+```
+
+```{r load data}
+blueberries_train <- readr::read_rds(here::here("Data", "Interim", "blueberries_appended.RDS")) #Data from competition plus original dataset
+
+```
+
+# Exploratory Data Analysis
+
+```{r Features - names}
+print(names(blueberries_train))
+
+```
+
+## Grouping variables
+```{r Grouping Variable - .provenance}
+print(with(blueberries_train, table(.provenance)))
+
+```
+
+
+## Numerical Features
+
+### clonesize
+```{r Numerical Features - clonesize information}
+skimr::skim(blueberries_train, clonesize)
+
+```
+
+```{r Numerical Features - clonesize cardinality}
+blueberries_train %>%
+  dplyr::pull(clonesize) %>%
+  unique() %>%
+  length() %>%
+  glue::glue_col("Number of {bold unique} values in clonesize: {green {.}}",
+                 .ignore = .) %>%
+  print()
+
+blueberries_train %>%
+  dplyr::pull(clonesize) %>%
+  table() %>%
+  sort() %>%
+  names() %>%
+  glue::glue_col("{cyan {.}}",
+                 .ignore = .) %>%
+  print()
+
+```
+
+```{r Numerical Features - clonesize graphical display - histogram}
+blueberries_train %>%
+  ggplot2::ggplot(mapping = ggplot2::aes(x = clonesize)) +
+  ggplot2::geom_histogram(stat = "density")
+```
+
+```{r Numerical Features - clonesize graphical display - histogram by provenance}
+blueberries_train %>%
+  ggplot2::ggplot(mapping = ggplot2::aes(x = clonesize)) +
+  ggplot2::geom_histogram(stat = "density") +
+  ggplot2::facet_wrap(~ .provenance)
+```
+
+```{r Numerical Features - clonesize graphical display - boxplot, fig.align='center', fig.width=15, fig.height=10}
+blueberries_train %>%
+  ggplot2::ggplot(
+    mapping = ggplot2::aes(y = clonesize, 
+                           x = .provenance, 
+                           colour = .provenance),
+    fill = "transparent") +
+  ggplot2::geom_boxplot() +
+  ggplot2::geom_jitter() +
+  ggsci::scale_color_jama()
+```
+
+```{r Numerical Features - honeybee information}
+skimr::skim(blueberries_train, honeybee)
+```
+
+```{r Numerical Features - honeybee cardinality}
+blueberries_train %>%
+  dplyr::pull(honeybee) %>%
+  unique() %>%
+  length() %>%
+  glue::glue_col("Number of {bold unique} values in honeybee: {green {.}}",
+                 .ignore = .) %>%
+  print()
+
+blueberries_train %>%
+  dplyr::pull(honeybee) %>%
+  table() %>%
+  sort() %>%
+  glue::glue_col("{magenta {names(.)}}: {cyan {.}}",
+                 .ignore = .) %>%
+  print()
+
+```
+
+```{r Numerical Features - honeybee graphical display - histogram, fig.align='center', fig.height=10, fig.width=15}
+blueberries_train %>%
+  ggplot2::ggplot(mapping = ggplot2::aes(x = honeybee)) +
+  ggplot2::geom_histogram(stat = "density", fill = "#feb24c")
+```
+
+```{r Numerical Features - honeybee graphical display - boxplot, fig.align='center', fig.height=10, fig.width=15}
+blueberries_train %>%
+  dplyr::mutate(.med = median(blueberries_train[["honeybee"]], na.rm = TRUE), 
+                .iqr_lwr = quantile(blueberries_train[["honeybee"]],probs = 0.25, na.rm = TRUE),
+                .threshold_lwr = .med - (1.5*.iqr_lwr),
+                .iqr_upr = quantile(blueberries_train[["honeybee"]],probs = 0.75, na.rm = TRUE),
+                .threshold_upr = .med + (1.5*.iqr_lwr),
+                .outlier_tufte = !dplyr::between(honeybee,.iqr_lwr, .iqr_upr)) %>%
+  ggplot2::ggplot(
+    mapping = ggplot2::aes(y = honeybee, x = "")) +
+  ggplot2::geom_jitter(mapping = ggplot2::aes(shape = .outlier_tufte), 
+                       colour = "#feb24c", size = 3) +
+  ggplot2::geom_boxplot(colour = "#feb24c", outlier.colour = "transparent")
+```
+
+
+
+
+
+
+
+

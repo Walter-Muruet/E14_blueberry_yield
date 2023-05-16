@@ -1,0 +1,163 @@
+---
+title: "xx-baseline_model"
+output: html_notebook
+---
+
+```{r set up}
+# Packages
+## here package for automatically constructing file paths
+if (!"here" %in% installed.packages()) {
+  install.packages("here", dependencies = TRUE, quiet = TRUE)
+}
+
+## Install all other packages
+source(here::here("Src","R","install_required_packages.R"))
+
+## Load selected libraries to load space
+library(magrittr) # enables the use of pipes
+
+# Visualisation parameters
+## ggplot2 settings
+ggplot2::theme_set(
+  ggthemes::theme_tufte() +
+    ggplot2::theme(legend.position = "bottom",
+                   text = ggplot2::element_text(size = 12))
+)
+```
+
+```{r load data}
+blueberries_train <- readr::read_rds(here::here("Data", "Interim", "blueberries_appended.RDS")) #Data from competition plus original dataset
+
+```
+
+# Baseline models
+
+```{r model engines}
+n_cpus = parallel::detectCores() - 1
+
+lmreg_eng <- 
+  parsnip::linear_reg(penalty = tune::tune(), mixture = tune::tune()) %>%
+  parsnip::set_engine("glmnet")
+
+randf_eng <- 
+  parsnip::rand_forest(mtry = tune::tune(), 
+                       trees = tune::tune(), 
+                       min_n = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("ranger", num.threads = n_cpus)
+
+boost_eng <- 
+  parsnip::boost_tree(trees = tune::tune(), 
+                      tree_depth = tune::tune(), 
+                      learn_rate = tune::tune(), 
+                      loss_reduction = tune::tune(), 
+                      stop_iter = tune::tune()) %>%
+  parsnip::set_mode("regression") %>%
+  parsnip::set_engine("xgboost")
+
+```
+
+```{r preprocessing}
+
+model_rec <- 
+  recipes::recipe(yield ~ ., data = blueberries_train) %>%
+  recipes::step_rm(.provenance)
+
+```
+
+```{r model screening}
+set.seed(13)
+cv_folds <- rsample::vfold_cv(blueberries_train, v = 10)
+
+race_ctrl <- finetune::control_race(save_pred = TRUE, 
+                                    save_workflow = TRUE, 
+                                    parallel_over = "everything")
+
+wkflws_set <- workflowsets::workflow_set(preproc = list(model_rec),
+                                         models = list(lm = lmreg_eng,
+                                                       rf = randf_eng,
+                                                       xgb = boost_eng), 
+                                         cross = TRUE)
+
+regression_metrics <- yardstick::metric_set(yardstick::mae)
+
+fitted_models <- workflowsets::workflow_map(wkflws_set, 
+                                            fn = "tune_race_anova",
+                                            resamples = cv_folds,
+                                            grid = 50,
+                                            metrics = regression_metrics,
+                                            control = race_ctrl,
+                                            seed = 13)
+
+
+```
+
+```{r model ranking}
+workflowsets::rank_results(fitted_models, rank_metric = "mae", select_best = TRUE) 
+
+```
+
+```{r best models hyperparameters - random forest}
+workflowsets::extract_workflow_set_result(fitted_models, id = "recipe_rf") %>%
+  tune::select_best(metric = "mae") %T>%
+  assign("best_rf_params", ., envir = .GlobalEnv) %>%
+  print()
+
+```
+
+
+```{r best models hyperparameters - Gradient Boosting}
+workflowsets::extract_workflow_set_result(fitted_models, id = "recipe_xgb") %>%
+  tune::select_best(metric = "mae") %T>%
+  assign("best_xgb_params", ., envir = .GlobalEnv) %>%
+  print()
+
+```
+
+```{r full models}
+rf_regressor <- 
+  workflowsets::extract_workflow(fitted_models, id = "recipe_rf") %>%
+  tune::finalize_workflow(best_rf_params) %>%
+  parsnip::fit(blueberries_train)
+
+gb_regressor <- 
+  workflowsets::extract_workflow(fitted_models, id = "recipe_xgb") %>%
+  tune::finalize_workflow(best_xgb_params) %>%
+  parsnip::fit(blueberries_train)
+
+```
+
+
+```{r load test data}
+
+blueberries_test <- 
+  readRDS(here::here("Data", "Interim", "blueberries_test.RDS")) %>%
+  dplyr::mutate(.provenance = NA)
+
+```
+
+```{r submissions}
+generate_submissions <- function(model, new_data) {
+  file_name = as.character(substitute(model))
+  y_preds <- predict(model, new_data = new_data)[[1]]
+  
+  new_data %>%
+    dplyr::transmute(
+      id = id,
+      yield = y_preds) %T>% 
+    readr::write_csv(here::here("Submissions",paste0(file_name,".csv"))) %>%
+    print()
+}
+
+```
+
+
+```{r submissions - random forest}
+generate_submissions(rf_regressor, blueberries_test)
+
+```
+
+```{r submissions - gradient boosting}
+generate_submissions(gb_regressor, blueberries_test)
+
+```
